@@ -1,0 +1,55 @@
+name: download
+
+# 雲端下載台股多因子回測資料（FinMind 免費版，每小時 500 次自我限速）。
+# 一次最多跑約 5.4 小時，結束後把新抓的檔案存到 Release "data"，再自己觸發下一次，直到全部完成。
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 */6 * * *'   # 備援：接力鏈斷掉時重新啟動
+
+concurrency:
+  group: download
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # 上傳 Release
+  actions: write    # 觸發下一次
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DATA_DIR: ${{ github.workspace }}/data
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install requests pandas pyarrow
+
+      - name: 取得進度（清單、股票池、狀態）
+        run: |
+          mkdir -p data
+          gh release download data -p manifest.txt -p universe.csv -p download_status.json -D data --clobber || echo "第一次執行，沒有既有進度"
+
+      - name: 下載
+        env:
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+          DEADLINE_HOURS: '5.4'
+        run: python -W ignore fetch_all.py
+
+      - name: 存檔到 Release
+        if: always()
+        run: |
+          python -W ignore fetch_all.py --pack "${{ github.run_id }}"
+          ls -la data | head -20
+          if ls data/chunk-*.tar >/dev/null 2>&1; then gh release upload data data/chunk-*.tar --clobber; fi
+          for f in manifest.txt universe.csv download_status.json; do [ -f data/$f ] && gh release upload data data/$f --clobber; done
+          true
+
+      - name: 接力
+        if: always()
+        run: |
+          if [ -f data/finished.flag ]; then echo "全部完成"; else gh workflow run download.yml; fi
