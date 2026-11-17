@@ -46,10 +46,13 @@ jobs:
           python -W ignore fetch_all.py --pack "${{ github.run_id }}"
           ls -la data | head -20
           if ls data/chunk-*.tar >/dev/null 2>&1; then gh release upload data data/chunk-*.tar --clobber; fi
-          for f in manifest.txt universe.csv download_status.json; do [ -f data/$f ] && gh release upload data data/$f --clobber; done
-          true
+          # 清單最後上傳：只有 chunk 上傳成功，進度才算數
+          for f in universe.csv download_status.json manifest.txt; do
+            if [ -f data/$f ]; then gh release upload data data/$f --clobber; fi
+          done
 
       - name: 接力
-        if: always()
+        # 只有前面全部成功才接力；失敗就停，避免無限快速重跑（備援排程每 6 小時會再試一次）
+        if: success()
         run: |
           if [ -f data/finished.flag ]; then echo "全部完成"; else gh workflow run download.yml; fi

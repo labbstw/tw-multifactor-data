@@ -21,8 +21,13 @@ DATA = os.environ.get('DATA_DIR') or os.path.join(os.path.dirname(HERE), 'data')
 ROOT = os.path.dirname(os.path.dirname(HERE))   # 台股888/（雲端沒有）
 API = 'https://api.finmindtrade.com/api/v4/data'
 TOKEN = os.environ.get('FINMIND_TOKEN')
-if not TOKEN:                                   # 本機：從專案 .env 讀
-    sys.path.insert(0, os.path.join(ROOT, 'scripts')); import common; TOKEN = common.TOKEN
+
+def need_token():
+    """只有真的要送請求時才取 token（--pack、--status 不需要）；本機從專案 .env 讀。"""
+    global TOKEN
+    if not TOKEN:
+        sys.path.insert(0, os.path.join(ROOT, 'scripts')); import common; TOKEN = common.TOKEN
+    return TOKEN
 DEADLINE = time.time() + float(os.environ.get('DEADLINE_HOURS', 1e6)) * 3600   # 雲端單次最多跑幾小時
 
 OUT = os.path.join(DATA, 'fm')
@@ -79,23 +84,14 @@ class OutOfTime(Exception): pass
 
 def wait_for_quota():
     j = requests.get('https://api.web.finmindtrade.com/v2/user_info',
-                     headers={'Authorization': f'Bearer {TOKEN}'}, timeout=30).json()
-    nxt = pd.Timestamp(j.get('next_available_time') or pd.Timestamp.now() + pd.Timedelta(minutes=5))
-    secs = max(30, (nxt - pd.Timestamp.now()).total_seconds() + 30)
+                     headers={'Authorization': f'Bearer {need_token()}'}, timeout=30).json()
+    nxt = j.get('next_available_time')               # 台北時間字串（沒有時區），必須明確指定時區
+    if nxt: secs = (pd.Timestamp(nxt).tz_localize('Asia/Taipei') - pd.Timestamp.now(tz='UTC')).total_seconds() + 30
+    else: secs = 300
+    secs = min(max(30, secs), 3700)                  # 一小時視窗，最多等一小時多一點
+    log.info(f'限流，等待 {secs / 60:.1f} 分鐘')
     if time.time() + secs > DEADLINE: raise OutOfTime()
     time.sleep(secs)
-
-QUIET = (19 * 60 + 30, 23 * 60)   # 台北時間 19:30–23:00 完全不送請求，讓每晚的 money888.bat 獨享 FinMind 額度
-
-def quiet_wait():
-    """在靜默時段內睡到結束；睡不完（超過本次期限）就收工，交給下一次接力。"""
-    while True:
-        t = time.gmtime(time.time() + 8 * 3600)             # 台北時間（固定 UTC+8，不受本機時區影響）
-        m = t.tm_hour * 60 + t.tm_min
-        if not (QUIET[0] <= m < QUIET[1]): return
-        wake = time.time() + (QUIET[1] - m) * 60 - t.tm_sec + 5
-        if wake > DEADLINE: raise OutOfTime()
-        time.sleep(min(600, wake - time.time()))
 
 def throttle():
     while True:
@@ -117,7 +113,7 @@ def get(dataset, **params):
     while True:
         throttle()
         try:
-            r = requests.get(API, headers={'Authorization': f'Bearer {TOKEN}'},
+            r = requests.get(API, headers={'Authorization': f'Bearer {need_token()}'},
                              params={'dataset': dataset, **params}, timeout=180)
             if r.status_code == 402:
                 log.info('FinMind 限流，等待配額'); wait_for_quota(); continue
