@@ -93,6 +93,18 @@ def wait_for_quota():
     if time.time() + secs > DEADLINE: raise OutOfTime()
     time.sleep(secs)
 
+QUIET = (19 * 60 + 30, 23 * 60)   # 台北時間 19:30–23:00 完全不送請求，讓每晚的 money888.bat 獨享 FinMind 額度
+
+def quiet_wait():
+    """在靜默時段內睡到結束；睡不完（超過本次期限）就收工，交給下一次接力。"""
+    while True:
+        t = time.gmtime(time.time() + 8 * 3600)             # 台北時間（固定 UTC+8，不受本機時區影響）
+        m = t.tm_hour * 60 + t.tm_min
+        if not (QUIET[0] <= m < QUIET[1]): return
+        wake = time.time() + (QUIET[1] - m) * 60 - t.tm_sec + 5
+        if wake > DEADLINE: raise OutOfTime()
+        time.sleep(min(600, wake - time.time()))
+
 def throttle():
     while True:
         if time.time() > DEADLINE: raise OutOfTime()
@@ -270,6 +282,7 @@ def main():
     except Exception as e:
         log.exception('未預期錯誤')
         notify('台股多因子：下載程式出錯', f'{e}\n\n下次開機會自動重試。詳細見：\n{LOG}')
+        if CLOUD: sys.exit(1)                     # 雲端：讓這次執行顯示失敗，不要接力空轉
 
 
 if __name__ == '__main__':

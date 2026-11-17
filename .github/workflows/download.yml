@@ -4,6 +4,11 @@ name: download
 # 一次最多跑約 5.4 小時，結束後把新抓的檔案存到 Release "data"，再自己觸發下一次，直到全部完成。
 on:
   workflow_dispatch:
+    inputs:
+      hours:
+        description: '本次最多跑幾小時（短測用 0.05）'
+        default: '5.4'
+        required: false
   schedule:
     - cron: '23 */6 * * *'   # 備援：接力鏈斷掉時重新啟動
 
@@ -37,7 +42,7 @@ jobs:
       - name: 下載
         env:
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
-          DEADLINE_HOURS: '5.4'
+          DEADLINE_HOURS: ${{ github.event.inputs.hours || '5.4' }}
         run: python -W ignore fetch_all.py
 
       - name: 存檔到 Release
